@@ -1,5 +1,9 @@
 #include <wre/water_ripple.h>
+#include <wre/wave_map.hpp>
 
+#include <cstddef>
+#include <optional>
+#include <stdexcept>
 #include <algorithm>
 #include <numeric>
 #include <assert.h>
@@ -32,14 +36,31 @@ namespace wre
         return m_wave_map.size_bytes();
     }
 
-    void water_ripple::render(std::span<const uint32_t> src, std::span<uint32_t> dest)
+    uint32_t water_ripple::width() const
     {
-        draw_ripple(src, dest);
+        return m_wave_map.width();
+    }
+
+    uint32_t water_ripple::height() const
+    {
+        return m_wave_map.height();
+    }
+
+    uint8_t water_ripple::damping() const
+    {
+        return m_damping;
+    }
+
+    void water_ripple::render(std::span<const uint8_t> src, 
+                              std::span<uint8_t> dest,
+                              pixel_format format)
+    {
+        draw_ripple(src, dest, format);
         m_wave_map.update(m_damping);
         m_wave_map.swap_buffers();
     }
 
-    void water_ripple::make_bubble(int32_t x, int32_t y, 
+    void water_ripple::make_ripple(int32_t x, int32_t y, 
                                    uint32_t radius, uint32_t blob_height)
     {
         std::span hnew = m_wave_map.buffer(wave_map::buffer_type::current);
@@ -85,9 +106,22 @@ namespace wre
         }
     }
 
-    void water_ripple::draw_ripple(std::span<const uint32_t> src, 
-                                   std::span<uint32_t> dest)
+    [[gnu::noinline]]
+    void water_ripple::draw_ripple(std::span<const uint8_t> src, 
+                                   std::span<uint8_t> dest,
+                                   pixel_format format)
     {
+        // the size of src and dest must be same
+        [[unlikely]]
+        if (src.size() != dest.size())
+            throw std::invalid_argument{ "src and dest must have the same size" };
+
+        const uint8_t num_channels = (format == pixel_format::rgb) ? 3 : 4;
+
+        [[unlikely]]
+        if ((src.size() / num_channels) != (size() / 2))
+            throw std::invalid_argument{ "src must have the same size of wavemap" };
+
         uint32_t width = m_wave_map.width();
         uint32_t height = m_wave_map.height();
         std::span hptr = m_wave_map.buffer(wave_map::buffer_type::current);
@@ -104,11 +138,14 @@ namespace wre
             {
                 dx = hptr[offset] - hptr[offset + 1];
                 dy = hptr[offset] - hptr[offset + width];
-                light_index = static_cast<int32_t>(offset + width) * (dy >> 3) + (dx >> 3);
+                light_index = offset + width * (dy >> 3) + (dx >> 3);
 
                 if (light_index > 0 && light_index < img_size)
                 {
-                    dest[offset] = src[static_cast<uint32_t>(light_index)];
+                    for (uint8_t index = 0; index < num_channels; ++index)
+                    {
+                        dest[num_channels * offset + index] = src[num_channels * light_index + index];
+                    }
                 }
             }
         }
